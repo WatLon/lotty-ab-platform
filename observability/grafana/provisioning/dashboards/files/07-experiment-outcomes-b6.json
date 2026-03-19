@@ -1,0 +1,260 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": true,
+      "title": "Open /reports API in browser",
+      "type": "link",
+      "url": "http://localhost/reports/experiments/${experiment_id}?from=${__from:date:iso}&to=${__to:date:iso}&bucket=${bucket}"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### B6 report dashboard\n- Uses datasource **Control API Reports** with Bearer token.\n- Set `experiment_id` variable and time range.\n- Response source: `/reports/experiments/:experimentId`.",
+        "mode": "markdown"
+      },
+      "title": "Usage",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "marcusolsson-json-datasource",
+        "uid": "control_reports"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "cacheDurationSeconds": 60,
+          "datasource": {
+            "type": "marcusolsson-json-datasource",
+            "uid": "control_reports"
+          },
+          "fields": [
+            {
+              "name": "variantId",
+              "selector": "$.variants[*].variantId",
+              "type": "string"
+            },
+            {
+              "name": "sampleSize",
+              "selector": "$.variants[*].sampleSize",
+              "type": "number"
+            }
+          ],
+          "jsonPath": "$.variants[*]",
+          "method": "GET",
+          "params": [
+            [
+              "from",
+              "${__from:date:iso}"
+            ],
+            [
+              "to",
+              "${__to:date:iso}"
+            ],
+            [
+              "bucket",
+              "${bucket}"
+            ]
+          ],
+          "refId": "A",
+          "urlPath": "/reports/experiments/${experiment_id}"
+        }
+      ],
+      "title": "Variants Snapshot",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "marcusolsson-json-datasource",
+        "uid": "control_reports"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 3,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "cacheDurationSeconds": 60,
+          "datasource": {
+            "type": "marcusolsson-json-datasource",
+            "uid": "control_reports"
+          },
+          "fields": [
+            {
+              "name": "metricKey",
+              "selector": "$.variants[*].metrics[*].metricKey",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "selector": "$.variants[*].metrics[*].value",
+              "type": "number"
+            }
+          ],
+          "jsonPath": "$.variants[*].metrics[*]",
+          "method": "GET",
+          "params": [
+            [
+              "from",
+              "${__from:date:iso}"
+            ],
+            [
+              "to",
+              "${__to:date:iso}"
+            ],
+            [
+              "bucket",
+              "${bucket}"
+            ]
+          ],
+          "refId": "A",
+          "urlPath": "/reports/experiments/${experiment_id}"
+        }
+      ],
+      "title": "Metrics Snapshot",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 40,
+  "tags": [
+    "lotty",
+    "reports",
+    "b6"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "replace-with-experiment-id",
+          "value": "replace-with-experiment-id"
+        },
+        "hide": 0,
+        "label": "Experiment ID",
+        "name": "experiment_id",
+        "options": [],
+        "query": "replace-with-experiment-id",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "minute",
+          "value": "minute"
+        },
+        "hide": 0,
+        "label": "Bucket",
+        "name": "bucket",
+        "options": [
+          {
+            "selected": true,
+            "text": "minute",
+            "value": "minute"
+          },
+          {
+            "selected": false,
+            "text": "hour",
+            "value": "hour"
+          }
+        ],
+        "query": "minute,hour",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "07 Experiment Outcomes (B6)",
+  "uid": "lotty-experiment-outcomes-b6",
+  "version": 1,
+  "weekStart": ""
+}

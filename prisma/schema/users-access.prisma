@@ -1,0 +1,47 @@
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role     @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  version   Int      @default(0)
+
+  experiments              Experiment[]
+  reviews                  Review[]
+  outcomes                 ExperimentOutcome[]
+  approverGroupAsOwner     ApproverGroup?        @relation("ApproverGroupOwner")
+  approverGroupMemberships ApproverGroupMember[]
+  learningEntriesCreated   LearningEntry[]       @relation("LearningCreatedBy")
+  learningEntriesUpdated   LearningEntry[]       @relation("LearningUpdatedBy")
+  learningRevisions        LearningRevision[]    @relation("LearningRevisionChangedBy")
+  @@index([role])
+  @@map("users")
+}
+
+model ApproverGroup {
+  id                String   @id @default(uuid())
+  ownerId           String   @unique
+  requiredApprovals Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  version           Int      @default(0)
+
+  owner   User                  @relation("ApproverGroupOwner", fields: [ownerId], references: [id])
+  members ApproverGroupMember[]
+
+  @@map("approver_groups")
+}
+
+model ApproverGroupMember {
+  approverGroupId String
+  approverId      String
+  createdAt       DateTime @default(now())
+
+  approverGroup ApproverGroup @relation(fields: [approverGroupId], references: [id], onDelete: Cascade)
+  approver      User          @relation(fields: [approverId], references: [id], onDelete: Cascade)
+
+  @@id([approverGroupId, approverId])
+  @@map("approver_group_members")
+}

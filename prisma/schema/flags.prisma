@@ -1,0 +1,13 @@
+model Flag {
+  id           String        @id @default(uuid())
+  key          String        @unique
+  valueType    FlagValueType
+  defaultValue String
+  description  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  version      Int           @default(0)
+
+  experiments Experiment[]
+  @@map("flags")
+}

@@ -1,0 +1,91 @@
+model Experiment {
+  id              String           @id @default(uuid())
+  name            String
+  description     String?
+  flagId          String
+  status          ExperimentStatus @default(DRAFT)
+  conflictDomain  String?
+  priority        Int              @default(0)
+  audiencePercent Int
+  targetingRule   Json?
+  ownerId         String
+  startedAt       DateTime?
+  pausedAt        DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  version         Int              @default(0)
+
+  flag              Flag               @relation(fields: [flagId], references: [id])
+  owner             User               @relation(fields: [ownerId], references: [id])
+  variants          Variant[]
+  reviews           Review[]
+  metrics           ExperimentMetric[]
+  guardrails        GuardrailRule[]
+  guardrailTriggers GuardrailTrigger[]
+  outcome           ExperimentOutcome?
+  learningEntries   LearningEntry[]
+
+  @@index([flagId])
+  @@index([status])
+  @@index([ownerId])
+  @@map("experiments")
+}
+
+model ExperimentEvent {
+  id          String   @id @default(uuid())
+  aggregateId String
+  version     Int
+  eventType   String
+  payload     Json
+  occurredAt  DateTime
+
+  @@unique([aggregateId, version])
+  @@index([aggregateId])
+  @@map("experiment_events")
+}
+
+model Variant {
+  id           String  @id @default(uuid())
+  experimentId String
+  name         String
+  value        String
+  weight       Int
+  isControl    Boolean @default(false)
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+  @@map("variants")
+}
+
+model Review {
+  id           String         @id @default(uuid())
+  experimentId String
+  reviewerId   String
+  decision     ReviewDecision
+  comment      String?
+  createdAt    DateTime       @default(now())
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  reviewer   User       @relation(fields: [reviewerId], references: [id])
+
+  @@index([experimentId])
+  @@index([reviewerId])
+  @@map("reviews")
+}
+
+model ExperimentOutcome {
+  id              String                @id @default(uuid())
+  experimentId    String                @unique
+  outcome         ExperimentOutcomeType
+  winnerVariantId String?
+  comment         String
+  decidedById     String
+  decidedAt       DateTime              @default(now())
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  decidedBy  User       @relation(fields: [decidedById], references: [id])
+
+  @@map("experiment_outcomes")
+}

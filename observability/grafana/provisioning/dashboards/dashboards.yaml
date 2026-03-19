@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: lotty-observability
+    orgId: 1
+    folder: Lotty Observability
+    type: file
+    disableDeletion: false
+    editable: false
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/files

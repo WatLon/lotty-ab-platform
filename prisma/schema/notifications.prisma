@@ -1,0 +1,83 @@
+model NotificationChannel {
+  id         String                  @id @default(uuid())
+  name       String
+  type       NotificationChannelType
+  config     Json
+  isEnabled  Boolean                 @default(true)
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+  version    Int                     @default(0)
+  targets    NotificationTarget[]
+  deliveries NotificationDelivery[]
+
+  @@index([type])
+  @@index([isEnabled])
+  @@map("notification_channels")
+}
+
+model NotificationRule {
+  id                 String                 @id @default(uuid())
+  name               String
+  event              String
+  scopeType          NotificationScopeType  @default(ANY)
+  scopeValue         String?
+  severity           String                 @default("info")
+  metricKey          String?
+  environment        String?
+  rateLimitCount     Int                    @default(50)
+  rateLimitWindowSec Int                    @default(60)
+  dedupeWindowSec    Int                    @default(300)
+  messageTemplate    String?
+  isEnabled          Boolean                @default(true)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  version            Int                    @default(0)
+  targets            NotificationTarget[]
+  deliveries         NotificationDelivery[]
+
+  @@index([event])
+  @@index([isEnabled])
+  @@map("notification_rules")
+}
+
+model NotificationTarget {
+  id         String                 @id @default(uuid())
+  ruleId     String
+  channelId  String
+  address    String?
+  createdAt  DateTime               @default(now())
+  rule       NotificationRule       @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  channel    NotificationChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
+
+  @@unique([ruleId, channelId, address])
+  @@index([ruleId])
+  @@index([channelId])
+  @@map("notification_targets")
+}
+
+model NotificationDelivery {
+  id            String                     @id @default(uuid())
+  sourceEventId String
+  ruleId        String
+  targetId      String
+  channelId     String
+  status        NotificationDeliveryStatus
+  payload       Json
+  response      Json?
+  errorMessage  String?
+  attempt       Int                        @default(1)
+  createdAt     DateTime                   @default(now())
+  sentAt        DateTime?
+  rule          NotificationRule           @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  target        NotificationTarget         @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  channel       NotificationChannel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceEventId, ruleId, targetId])
+  @@index([ruleId])
+  @@index([targetId])
+  @@index([channelId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("notification_deliveries")
+}

@@ -1,0 +1,6 @@
+export enum NotificationDeliveryStatus {
+  SENT = 'SENT',
+  FAILED = 'FAILED',
+  SUPPRESSED_DEDUP = 'SUPPRESSED_DEDUP',
+  SUPPRESSED_RATE_LIMIT = 'SUPPRESSED_RATE_LIMIT',
+}

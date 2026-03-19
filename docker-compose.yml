@@ -1,0 +1,529 @@
+services:
+  gateway:
+    image: nginx:1.29.5-alpine
+    ports:
+      - "80:8080"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro,z
+    depends_on:
+      control-api:
+        condition: service_healthy
+      decide-api:
+        condition: service_healthy
+      ingest-api:
+        condition: service_healthy
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  control-api:
+    build:
+      context: .
+      target: production
+      args:
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        ALL_PROXY: ""
+    expose:
+      - "3000"
+    command: ["bun", "src/apps/control-api/main.ts"]
+    environment:
+      - PORT=3000
+      - APP_SECRET=${APP_SECRET:-dev-insecure-secret}
+      - AUTH_ACCESS_TOKEN_TTL_SECONDS=${AUTH_ACCESS_TOKEN_TTL_SECONDS:-2592000}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/${POSTGRES_DB:-app}
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=lotty-control-api
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-lotty}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-lotty}
+      - BOOTSTRAP_ADMIN_EMAIL=${BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-SecurePass123}
+      - BOOTSTRAP_ADMIN_NAME=${BOOTSTRAP_ADMIN_NAME:-Bootstrap Admin}
+      - SUBJECT_PARTICIPATION_MAX_CONCURRENT_EXPERIMENTS=3
+      - SUBJECT_PARTICIPATION_COOLDOWN_AFTER_TOTAL=5
+      - SUBJECT_PARTICIPATION_ROLLING_WINDOW_MS=2592000000
+      - SUBJECT_PARTICIPATION_COOLDOWN_PERIOD_MS=86400000
+      - OTEL_SERVICE_NAME=lotty-control-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://alloy:4318/v1/traces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      clickhouse-bootstrap:
+        condition: service_completed_successfully
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-control-api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  decide-api:
+    build:
+      context: .
+      target: production
+      args:
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        ALL_PROXY: ""
+    expose:
+      - "3000"
+    command: ["bun", "src/apps/decide-api/main.ts"]
+    environment:
+      - PORT=3000
+      - APP_SECRET=${APP_SECRET:-dev-insecure-secret}
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=lotty-decide-api
+      - DECIDE_THROTTLE_DISABLED=${DECIDE_THROTTLE_DISABLED:-0}
+      - DECIDE_THROTTLE_LIMIT=${DECIDE_THROTTLE_LIMIT:-200}
+      - DECIDE_THROTTLE_TTL_MS=${DECIDE_THROTTLE_TTL_MS:-1000}
+      - SUBJECT_PARTICIPATION_MAX_CONCURRENT_EXPERIMENTS=3
+      - SUBJECT_PARTICIPATION_COOLDOWN_AFTER_TOTAL=5
+      - SUBJECT_PARTICIPATION_ROLLING_WINDOW_MS=2592000000
+      - SUBJECT_PARTICIPATION_COOLDOWN_PERIOD_MS=86400000
+      - OTEL_SERVICE_NAME=lotty-decide-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://alloy:4318/v1/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-decide-api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ingest-api:
+    build:
+      context: .
+      target: production
+      args:
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        ALL_PROXY: ""
+    expose:
+      - "3000"
+    command: ["bun", "src/apps/ingest-api/main.ts"]
+    environment:
+      - PORT=3000
+      - APP_SECRET=${APP_SECRET:-dev-insecure-secret}
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=lotty-ingest-api
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-lotty}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-lotty}
+      - OTEL_SERVICE_NAME=lotty-ingest-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://alloy:4318/v1/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-ingest-api"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  control-workers:
+    build:
+      context: .
+      target: production
+      args:
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        ALL_PROXY: ""
+    command: ["bun", "src/apps/control-workers/main.ts"]
+    environment:
+      - PORT=3000
+      - APP_SECRET=${APP_SECRET:-dev-insecure-secret}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/${POSTGRES_DB:-app}
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=lotty-control-workers
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-lotty}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-lotty}
+      - OTEL_SERVICE_NAME=lotty-control-workers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://alloy:4318/v1/traces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      clickhouse-bootstrap:
+        condition: service_completed_successfully
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-control-workers"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  ingest-workers:
+    build:
+      context: .
+      target: production
+      args:
+        HTTP_PROXY: ""
+        HTTPS_PROXY: ""
+        ALL_PROXY: ""
+    command: ["bun", "src/apps/ingest-workers/main.ts"]
+    environment:
+      - PORT=3000
+      - APP_SECRET=${APP_SECRET:-dev-insecure-secret}
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=lotty-ingest-workers
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-lotty}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-lotty}
+      - OTEL_SERVICE_NAME=lotty-ingest-workers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://alloy:4318/v1/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      clickhouse-bootstrap:
+        condition: service_completed_successfully
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "lotty-ingest-workers"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18.2-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "postgres"
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.6.0-alpine
+    command:
+      ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "redis"
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.2.0
+    environment:
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "kafka"
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:4.2.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /bin/bash
+      - -ec
+      - >
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic control.domain-events --partitions 6 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic decision.logs --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.raw --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.normalized --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.attributed --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic metric.observations --partitions 24 --replication-factor 1
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.1.3.52
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-lotty}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-lotty}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    labels:
+      logging.enabled: "true"
+      logging.jobname: "clickhouse"
+    restart: unless-stopped
+
+  db-bootstrap:
+    build:
+      context: .
+      target: production
+    command:
+      - sh
+      - -ec
+      - |
+        max_attempts="${BOOTSTRAP_MAX_ATTEMPTS:-30}"
+        sleep_seconds="${BOOTSTRAP_RETRY_DELAY_SECONDS:-2}"
+        attempt=1
+        while [ "$$attempt" -le "$$max_attempts" ]; do
+          if bunx prisma db push; then
+            echo "db-bootstrap completed on attempt $$attempt/$$max_attempts"
+            exit 0
+          fi
+          echo "db-bootstrap attempt $$attempt/$$max_attempts failed, retrying in $$sleep_seconds"'s'
+          attempt=$$((attempt + 1))
+          sleep "$$sleep_seconds"
+        done
+        echo "db-bootstrap failed after $$max_attempts attempts"
+        exit 1
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/${POSTGRES_DB:-app}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  clickhouse-bootstrap:
+    build:
+      context: .
+      target: production
+    command:
+      - sh
+      - -ec
+      - |
+        max_attempts="${BOOTSTRAP_MAX_ATTEMPTS:-30}"
+        sleep_seconds="${BOOTSTRAP_RETRY_DELAY_SECONDS:-2}"
+        attempt=1
+        while [ "$$attempt" -le "$$max_attempts" ]; do
+          if bun scripts/migrate-clickhouse.ts; then
+            echo "clickhouse-bootstrap completed on attempt $$attempt/$$max_attempts"
+            exit 0
+          fi
+          echo "clickhouse-bootstrap attempt $$attempt/$$max_attempts failed, retrying in $$sleep_seconds"'s'
+          attempt=$$((attempt + 1))
+          sleep "$$sleep_seconds"
+        done
+        echo "clickhouse-bootstrap failed after $$max_attempts attempts"
+        exit 1
+    environment:
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-lotty}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-lotty}
+      - KAFKA_BROKERS=kafka:9092
+      - CLICKHOUSE_DECISIONS_KAFKA_GROUP=${CLICKHOUSE_DECISIONS_KAFKA_GROUP:-clickhouse-decisions-sink}
+      - CLICKHOUSE_EVENTS_KAFKA_GROUP=${CLICKHOUSE_EVENTS_KAFKA_GROUP:-clickhouse-events-attributed-sink}
+      - CLICKHOUSE_METRIC_OBS_KAFKA_GROUP=${CLICKHOUSE_METRIC_OBS_KAFKA_GROUP:-clickhouse-metric-observations-sink}
+      - CLICKHOUSE_DECISIONS_KAFKA_CONSUMERS=${CLICKHOUSE_DECISIONS_KAFKA_CONSUMERS:-1}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  alloy:
+    image: grafana/alloy:v1.13.1
+    profiles: ["observability"]
+    user: "0:0"
+    security_opt:
+      - label=disable
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro,z
+      - /var/run/docker.sock:/var/run/docker.sock:ro,z
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.6.6
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro,z
+      - loki_data:/loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.10.1
+    profiles: ["observability"]
+    user: "0:0"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro,z
+      - tempo_data:/tmp/tempo
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.1
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.3.3
+    profiles: ["observability"]
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_PLUGINS_PREINSTALL_SYNC=marcusolsson-json-datasource
+      - GRAFANA_REPORTS_BEARER_TOKEN=${GRAFANA_REPORTS_BEARER_TOKEN:-}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro,z
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  clickhouse_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
+  tempo_data:
+  prometheus_data:

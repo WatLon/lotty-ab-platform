@@ -1,0 +1,24 @@
+flowchart TB
+    classDef person fill:#08427B,color:#fff,stroke:#073B6F
+    classDef system fill:#1168BD,color:#fff,stroke:#0E5AA7
+    classDef ext fill:#999,color:#fff,stroke:#6B6B6B
+
+    admin["👤 Admin<br/>Управляет пользователями,<br/>ролями, approver-группами"]:::person
+    experimenter["👤 Experimenter<br/>Создаёт флаги, эксперименты,<br/>метрики, guardrails"]:::person
+    approver["👤 Approver<br/>Ревьюит и одобряет/отклоняет<br/>эксперименты"]:::person
+    viewer["👤 Viewer<br/>Читает отчёты,<br/>эксперименты, learnings"]:::person
+
+    product["📱 Product Application<br/>Запрашивает значения флагов,<br/>отправляет события"]:::ext
+
+    lotty["🟦 Lotty A/B Platform<br/>Feature flags, эксперименты,<br/>runtime decide, ingest событий,<br/>отчёты, guardrails, уведомления,<br/>learnings library"]:::system
+
+    telegram["📨 Telegram API<br/>Канал уведомлений"]:::ext
+    slack["📨 Slack API<br/>Канал уведомлений"]:::ext
+
+    admin -->|"HTTPS — users, approver groups"| lotty
+    experimenter -->|"HTTPS — flags, experiments,<br/>metrics, event types, guardrails"| lotty
+    approver -->|"HTTPS — review<br/>approve / reject"| lotty
+    viewer -->|"HTTPS — read reports,<br/>experiments, learnings"| lotty
+    product -->|"HTTPS — POST /decide<br/>POST /events/ingest"| lotty
+    lotty -->|"HTTPS — send notification"| telegram
+    lotty -->|"HTTPS — send notification"| slack

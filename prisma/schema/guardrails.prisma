@@ -1,0 +1,37 @@
+model GuardrailRule {
+  id            String             @id @default(uuid())
+  experimentId  String
+  metricId      String
+  threshold     Float
+  operator      ComparisonOperator
+  windowMinutes Int
+  action        GuardrailAction
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  version       Int                @default(0)
+
+  experiment Experiment         @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  metric     Metric             @relation(fields: [metricId], references: [id])
+  triggers   GuardrailTrigger[]
+
+  @@unique([experimentId, metricId, threshold, operator, windowMinutes, action])
+  @@index([experimentId])
+  @@map("guardrail_rules")
+}
+
+model GuardrailTrigger {
+  id           String          @id @default(uuid())
+  guardrailId  String
+  experimentId String
+  metricValue  Float
+  threshold    Float
+  actionTaken  GuardrailAction
+  triggeredAt  DateTime        @default(now())
+
+  guardrail  GuardrailRule @relation(fields: [guardrailId], references: [id], onDelete: Cascade)
+  experiment Experiment    @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+  @@index([triggeredAt])
+  @@map("guardrail_triggers")
+}

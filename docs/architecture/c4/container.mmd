@@ -1,0 +1,82 @@
+flowchart TB
+    classDef person fill:#08427B,color:#fff,stroke:#073B6F
+    classDef container fill:#1168BD,color:#fff,stroke:#0E5AA7
+    classDef db fill:#2D882D,color:#fff,stroke:#1E6B1E
+    classDef queue fill:#D4A017,color:#fff,stroke:#AA8012
+    classDef ext fill:#999,color:#fff,stroke:#6B6B6B
+    classDef obs fill:#6A0DAD,color:#fff,stroke:#4B0082
+
+    user["👤 Platform Users<br/>Admin / Experimenter /<br/>Approver / Viewer"]:::person
+    product["📱 Product Application"]:::ext
+    telegram_ext["📨 Telegram API"]:::ext
+    slack_ext["📨 Slack API"]:::ext
+
+    subgraph platform["Lotty A/B Platform"]
+        direction TB
+
+        gateway["🌐 API Gateway<br/>Nginx :8080<br/>─────────<br/>/ → control-api<br/>/decide → decide-api<br/>/events/ingest → ingest-api<br/>/docs/* → swagger proxies<br/>/grafana/* → Grafana (observability profile)"]:::container
+
+        subgraph apps["Application Services"]
+            direction LR
+            control_api["🔧 Control API<br/>NestJS · src/apps/control-api<br/>─────────<br/>REST: Users, Auth JWT+Argon2,<br/>Flags, Experiments Event Sourcing,<br/>Approver Groups, Event Types,<br/>Metrics, Guardrail Rules, Reports,<br/>Notifications, Learnings<br/>─────────<br/>Outbox Relay @Cron → Kafka<br/>Guardrail Check @Cron → ClickHouse"]:::container
+
+            decide_api["⚡ Decide API<br/>NestJS · src/apps/decide-api<br/>─────────<br/>In-memory snapshot from Redis<br/>Targeting DSL evaluator<br/>Deterministic bucketing murmur<br/>Participation limiter Redis<br/>Decision log → Kafka"]:::container
+
+            ingest_api["📥 Ingest API<br/>NestJS · src/apps/ingest-api<br/>─────────<br/>Event validation по каталогу<br/>in-memory from Redis<br/>Batch accept<br/>Produce → Kafka events.raw"]:::container
+        end
+
+        subgraph workers["Background Workers"]
+            direction LR
+            control_workers["⚙️ Control Workers<br/>NestJS · src/apps/control-workers<br/>─────────<br/>Kafka consumer:<br/>  control.domain-events<br/>─────────<br/>FlagProjection → Redis HSET+XADD<br/>EventTypeProjection → Redis HSET+XADD<br/>NotificationConsumer<br/>  → Renderer → Dispatcher<br/>  → Telegram / Slack"]:::container
+
+            ingest_workers["⚙️ Ingest Workers<br/>NestJS · src/apps/ingest-workers<br/>─────────<br/>Sequential Kafka pipeline:<br/>1. DeduplicationConsumer<br/>   events.raw → Redis SET NX<br/>   → events.normalized<br/>2. AttributionConsumer<br/>   events.normalized → Redis exposure<br/>   → events.attributed<br/>   → metric.observations"]:::container
+        end
+
+        subgraph datastores["Data Stores"]
+            direction LR
+            postgres[("🐘 PostgreSQL<br/>Prisma ORM<br/>─────────<br/>Flags, Experiments event store,<br/>Users, ApproverGroups,<br/>EventTypes, Metrics,<br/>GuardrailRules, GuardrailTriggers,<br/>Notifications, Learnings, Outbox")]:::db
+
+            clickhouse[("📊 ClickHouse<br/>OLAP<br/>─────────<br/>Kafka Engine tables consume:<br/>  decision.logs → decisions<br/>  events.attributed → events<br/>  metric.observations → metric_obs<br/>─────────<br/>metric_rollups_mv<br/>AggregatingMergeTree")]:::db
+
+            redis[("⚡ Redis<br/>Cache + State<br/>─────────<br/>runtime:snapshots hash+stream<br/>event-type:catalog hash+stream<br/>participation counters/cooldown<br/>idem:event: dedup SET NX<br/>attr:exposure: + attr:pending: attribution<br/>distributed locks")]:::db
+        end
+
+        kafka{{"📬 Apache Kafka<br/>─────────<br/>Topics:<br/>• control.domain-events (6 part)<br/>• decision.logs (24 part)<br/>• events.raw (24 part)<br/>• events.normalized (24 part)<br/>• events.attributed (24 part)<br/>• metric.observations (24 part)"}}:::queue
+
+        observability["📈 Observability<br/>Prometheus + Grafana +<br/>Loki + Tempo + Alloy<br/>─────────<br/>Grafana via gateway /grafana/<br/>7 dashboards"]:::obs
+    end
+
+    user -->|HTTPS| gateway
+    product -->|HTTPS| gateway
+
+    gateway -->|"/"| control_api
+    gateway -->|"/decide"| decide_api
+    gateway -->|"/events/ingest"| ingest_api
+
+    control_api -->|"read/write"| postgres
+    control_api -->|"read: reports,<br/>guardrail metrics"| clickhouse
+    control_api -->|"produce:<br/>control.domain-events<br/>via outbox relay"| kafka
+
+    control_workers -->|"consume:<br/>control.domain-events"| kafka
+    control_workers -->|"read projections"| postgres
+    control_workers -->|"write snapshots:<br/>HSET + XADD"| redis
+    control_workers -->|"read: notification rules,<br/>write: deliveries"| postgres
+    control_workers --> telegram_ext
+    control_workers --> slack_ext
+
+    decide_api -->|"read: snapshots HGETALL+XREAD<br/>write: participation counters"| redis
+    decide_api -->|"produce:<br/>decision.logs"| kafka
+
+    ingest_api -->|"read: catalog<br/>HGETALL+XREAD"| redis
+    ingest_api -->|"produce:<br/>events.raw"| kafka
+
+    ingest_workers -->|"consume:<br/>events.raw,<br/>events.normalized"| kafka
+    ingest_workers -->|"produce:<br/>events.normalized,<br/>events.attributed,<br/>metric.observations"| kafka
+    ingest_workers -->|"read/write:<br/>dedup SET NX,<br/>exposure + pending"| redis
+
+    clickhouse -->|"Kafka Engine consume:<br/>decision.logs,<br/>events.attributed,<br/>metric.observations"| kafka
+
+    observability -.->|"scrape /metrics"| control_api
+    observability -.->|"scrape /metrics"| decide_api
+    observability -.->|"scrape /metrics"| ingest_api
+    gateway -.->|"/grafana/*"| observability

@@ -1,0 +1,13 @@
+model EventType {
+  id               String   @id @default(uuid())
+  key              String   @unique
+  name             String
+  description      String?
+  schema           Json?
+  requiresExposure Boolean  @default(false)
+  isArchived       Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  version          Int      @default(1)
+  @@map("event_types")
+}

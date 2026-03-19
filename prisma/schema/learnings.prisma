@@ -1,0 +1,54 @@
+model LearningEntry {
+  id                  String                 @id @default(uuid())
+  experimentId        String?
+  featureKey          String?
+  team                String?
+  title               String
+  hypothesis          String
+  primaryMetricKey    String
+  guardrailMetricKeys String[]               @default([])
+  result              ExperimentOutcomeType?
+  actionTaken         String
+  summary             String
+  notes               String?
+  tags                String[]               @default([])
+  countries           String[]               @default([])
+  platforms           String[]               @default([])
+  reportUrl           String?
+  ticketUrl           String?
+  createdById         String
+  updatedById         String?
+  isArchived          Boolean                @default(false)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  version             Int                    @default(0)
+  experiment          Experiment?            @relation(fields: [experimentId], references: [id], onDelete: SetNull)
+  createdBy           User                   @relation("LearningCreatedBy", fields: [createdById], references: [id])
+  updatedBy           User?                  @relation("LearningUpdatedBy", fields: [updatedById], references: [id])
+  revisions           LearningRevision[]
+
+  @@index([experimentId])
+  @@index([featureKey])
+  @@index([team])
+  @@index([result])
+  @@index([isArchived])
+  @@index([createdAt])
+  @@map("learning_entries")
+}
+
+model LearningRevision {
+  id          String        @id @default(uuid())
+  learningId  String
+  revision    Int
+  changedById String
+  before      Json
+  after       Json
+  changedAt   DateTime      @default(now())
+  learning    LearningEntry @relation(fields: [learningId], references: [id], onDelete: Cascade)
+  changedBy   User          @relation("LearningRevisionChangedBy", fields: [changedById], references: [id])
+
+  @@unique([learningId, revision])
+  @@index([learningId])
+  @@index([changedById])
+  @@map("learning_revisions")
+}

@@ -1,0 +1,29 @@
+model Metric {
+  id                String             @id @default(uuid())
+  key               String             @unique
+  name              String
+  description       String?
+  formula           Json
+  isArchived        Boolean            @default(false)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  version           Int                @default(0)
+  experimentMetrics ExperimentMetric[]
+  guardrailRules    GuardrailRule[]
+
+  @@map("metrics")
+}
+
+model ExperimentMetric {
+  id           String  @id @default(uuid())
+  experimentId String
+  metricId     String
+  isPrimary    Boolean @default(false)
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  metric     Metric     @relation(fields: [metricId], references: [id])
+
+  @@unique([experimentId, metricId])
+  @@index([experimentId])
+  @@map("experiment_metrics")
+}

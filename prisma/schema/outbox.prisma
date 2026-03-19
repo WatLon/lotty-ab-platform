@@ -1,0 +1,12 @@
+model OutboxMessage {
+  id          String    @id @default(uuid())
+  aggregateId String
+  eventType   String
+  payload     Json
+  retryCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([processedAt, retryCount, createdAt])
+  @@map("outbox_messages")
+}

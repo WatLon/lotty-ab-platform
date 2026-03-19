@@ -1,0 +1,73 @@
+enum Role {
+  ADMIN
+  EXPERIMENTER
+  APPROVER
+  VIEWER
+}
+
+enum FlagValueType {
+  STRING
+  NUMBER
+  BOOLEAN
+}
+
+enum ExperimentStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  RUNNING
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum ReviewDecision {
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum ComparisonOperator {
+  GT
+  GTE
+  LT
+  LTE
+}
+
+enum GuardrailAction {
+  PAUSE
+  ROLLBACK
+}
+
+enum ExperimentOutcomeType {
+  ROLLOUT_WINNER
+  ROLLBACK
+  NO_EFFECT
+}
+
+enum MetricAggregation {
+  COUNT
+  RATIO
+  AVERAGE
+  PERCENTILE
+}
+
+enum NotificationChannelType {
+  SLACK
+  TELEGRAM
+}
+
+enum NotificationScopeType {
+  ANY
+  EXPERIMENT
+  FLAG
+  OWNER
+}
+
+enum NotificationDeliveryStatus {
+  SENT
+  FAILED
+  SUPPRESSED_DEDUP
+  SUPPRESSED_RATE_LIMIT
+}

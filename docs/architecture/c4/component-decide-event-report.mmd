@@ -1,0 +1,180 @@
+flowchart TB
+    classDef ctrl fill:#2196F3,color:#fff,stroke:#1769AA
+    classDef usecase fill:#1976D2,color:#fff,stroke:#0D47A1
+    classDef service fill:#0D47A1,color:#fff,stroke:#092E6B
+    classDef domain fill:#E65100,color:#fff,stroke:#BF360C
+    classDef infra fill:#388E3C,color:#fff,stroke:#1B5E20
+    classDef ext fill:#999,color:#fff,stroke:#6B6B6B
+    classDef db fill:#2D882D,color:#fff,stroke:#1E6B1E
+    classDef queue fill:#D4A017,color:#fff,stroke:#AA8012
+
+    product_decide["📱 Product App<br/>POST /decide"]:::ext
+    product_ingest["📱 Product App<br/>POST /events/ingest"]:::ext
+    analyst["👤 Analyst<br/>GET /experiments/:id/report"]:::ext
+    postgres[("🐘 PostgreSQL")]:::db
+    clickhouse[("📊 ClickHouse<br/>events, decisions,<br/>metric_obs,<br/>metric_rollups_mv")]:::db
+    redis[("⚡ Redis<br/>runtime:snapshots<br/>event-type:catalog<br/>participation counters<br/>idem:event: dedup<br/>attr:exposure: + attr:pending:")]:::db
+    kafka{{"📬 Kafka<br/>6 topics"}}:::queue
+    telegram_ext["📨 Telegram"]:::ext
+    slack_ext["📨 Slack"]:::ext
+
+    subgraph decide_api["⚡ Decide API  ·  src/apps/decide-api"]
+        direction TB
+
+        dc_ctrl["DecideController<br/>presentation/decide.controller.ts"]:::ctrl
+        dc_health["DecideHealthController<br/>presentation/decide-health.controller.ts"]:::ctrl
+
+        dc_uc["DecideUseCase<br/>application/decide.use-case.ts"]:::usecase
+
+        dc_assign["ExperimentAssignmentService<br/>application/services/<br/>experiment-assignment.service.ts"]:::service
+        dc_resolve["FlagResolver<br/>application/services/flag.resolver.ts"]:::service
+        dc_participation["ParticipationLimiter<br/>application/subject-participation/<br/>participation-limiter.ts"]:::service
+        dc_analytics["DecisionAnalyticsRepository<br/>application/<br/>decision-analytics.repository.ts"]:::service
+
+        dc_policy["ParticipationPolicy<br/>domain/subject-participation/<br/>participation-policy.ts"]:::domain
+        dc_bucket["BucketCalculator<br/>domain/bucket-calculator.ts"]:::domain
+        dc_decide_svc["DecideService<br/>domain/decide.service.ts"]:::domain
+        dc_targeting["Targeting Evaluator<br/>shared/domain/targeting/evaluator.ts"]:::domain
+
+        dc_snapshot["InMemoryRuntimeSnapshotProvider<br/>infrastructure/<br/>runtime-snapshot.provider.ts"]:::infra
+        dc_snap_consumer["RuntimeSnapshotConsumerService<br/>extends RedisSnapshotConsumer<br/>infrastructure/<br/>runtime-snapshot.consumer.service.ts"]:::infra
+        dc_log["DecisionKafkaLogRepository<br/>infrastructure/<br/>decision-log.producer.ts<br/>buffered flush every 25ms"]:::infra
+        dc_redis_part["RedisParticipationLimiter<br/>infrastructure/subject-participation/<br/>redis-participation-limiter.ts"]:::infra
+    end
+
+    product_decide --> dc_ctrl
+    dc_ctrl --> dc_uc
+    dc_uc --> dc_resolve
+    dc_resolve --> dc_snapshot
+    dc_uc --> dc_assign
+    dc_assign --> dc_targeting
+    dc_assign --> dc_bucket
+    dc_assign --> dc_decide_svc
+    dc_uc --> dc_participation
+    dc_participation --> dc_policy
+    dc_participation --> dc_redis_part
+    dc_redis_part -->|"read/write:<br/>participation counters"| redis
+    dc_snap_consumer -->|"HGETALL + XREAD<br/>runtime:snapshots"| redis
+    dc_snap_consumer -->|"apply snapshots"| dc_snapshot
+    dc_uc --> dc_analytics
+    dc_analytics -.->|"impl"| dc_log
+    dc_log -->|"produce:<br/>decision.logs"| kafka
+
+    subgraph ingest_api["📥 Ingest API  ·  src/apps/ingest-api"]
+        direction TB
+
+        ig_ctrl["IngestController<br/>presentation/ingest.controller.ts"]:::ctrl
+        ig_health["IngestHealthController<br/>presentation/ingest-health.controller.ts"]:::ctrl
+
+        ig_uc["IngestEventsUseCase<br/>application/ingest-events.use-case.ts"]:::usecase
+        ig_queue_port["IngestEventsQueue<br/>application/ingest-events-queue.ts<br/>port interface"]:::service
+
+        ig_validator["EventPayloadValidator<br/>domain/event-payload.validator.ts"]:::domain
+
+        ig_catalog["InMemoryEventTypeCatalogProvider<br/>infrastructure/<br/>event-type-catalog.provider.ts"]:::infra
+        ig_cat_consumer["EventTypeCatalogConsumerService<br/>extends RedisSnapshotConsumer<br/>infrastructure/<br/>event-type-catalog.consumer.service.ts"]:::infra
+        ig_producer["IngestEventsProducer<br/>infrastructure/<br/>ingest-events.producer.ts"]:::infra
+    end
+
+    product_ingest --> ig_ctrl
+    ig_ctrl --> ig_uc
+    ig_uc --> ig_validator
+    ig_validator --> ig_catalog
+    ig_uc --> ig_queue_port
+    ig_queue_port -.->|"impl"| ig_producer
+    ig_cat_consumer -->|"HGETALL + XREAD<br/>event-type:catalog"| redis
+    ig_cat_consumer -->|"apply catalog"| ig_catalog
+    ig_producer -->|"produce:<br/>events.raw"| kafka
+
+    subgraph ingest_workers["⚙️ Ingest Workers  ·  src/apps/ingest-workers  ·  SEQUENTIAL PIPELINE"]
+        direction TB
+
+        iw_dedup["DeduplicationConsumer<br/>deduplication.consumer.ts<br/>consume: events.raw<br/>produce: events.normalized"]:::service
+        iw_attr["AttributionConsumer<br/>attribution.consumer.ts<br/>consume: events.normalized<br/>produce: events.attributed<br/>produce: metric.observations"]:::service
+    end
+
+    kafka -->|"consume:<br/>events.raw"| iw_dedup
+    iw_dedup -->|"SET NX<br/>idem:event:*"| redis
+    iw_dedup -->|"produce:<br/>events.normalized"| kafka
+    kafka -->|"consume:<br/>events.normalized"| iw_attr
+    iw_attr -->|"read/write:<br/>attr:exposure:* attr:pending:*"| redis
+    iw_attr -->|"produce:<br/>events.attributed +<br/>metric.observations"| kafka
+
+    clickhouse -->|"Kafka Engine consume:<br/>decision.logs<br/>events.attributed<br/>metric.observations"| kafka
+
+    subgraph control_api["🔧 Control API  ·  src/apps/control-api  — Report + Guardrail + Outbox"]
+        direction TB
+
+        rp_ctrl["ReportController<br/>presentation/report/<br/>report.controller.ts"]:::ctrl
+
+        rp_uc["GetExperimentReportUseCase<br/>application/report/queries/<br/>get-experiment-report/"]:::usecase
+
+        rp_metric_read["MetricReadRepository<br/>infrastructure/metric/persistence/<br/>metric.read-prisma-repository.ts"]:::infra
+        rp_exp_read["ExperimentReadRepository<br/>infrastructure/experiment/persistence/<br/>experiment.read-prisma-repository.ts"]:::infra
+        rp_metric_src["MetricDataClickHouseSource<br/>infrastructure/metric/persistence/<br/>metric-data.clickhouse-source.ts"]:::infra
+        rp_formula["MetricFormulaEvaluator<br/>domain/metric/<br/>metric-formula-evaluator.service.ts"]:::domain
+
+        gr_check["GuardrailCheckService<br/>@Cron EVERY_MINUTE<br/>infrastructure/guardrail/guardrails/<br/>guardrail-check.service.ts"]:::service
+        gr_lock["DistributedLockService<br/>shared/infrastructure/cache/<br/>distributed-lock.service.ts"]:::infra
+        gr_loader["GuardrailRuleLoaderService<br/>infrastructure/guardrail/guardrails/<br/>guardrail-rule-loader.service.ts"]:::infra
+        gr_eval["GuardrailEvaluatorService<br/>infrastructure/guardrail/guardrails/<br/>guardrail-evaluator.service.ts"]:::service
+        gr_exec["GuardrailActionExecutorService<br/>infrastructure/guardrail/guardrails/<br/>guardrail-action-executor.service.ts"]:::service
+
+        exp_agg["ExperimentAggregateRoot<br/>domain/experiment/<br/>experiment.aggregate-root.ts<br/>Event Sourced"]:::domain
+        exp_es["ExperimentEventStoreRepository<br/>infrastructure/experiment/persistence/<br/>experiment.event-store-repository.ts"]:::infra
+
+        outbox["OutboxRelayService<br/>@Cron EVERY_SECOND<br/>infrastructure/outbox/<br/>outbox-relay.service.ts"]:::infra
+    end
+
+    analyst --> rp_ctrl
+    rp_ctrl --> rp_uc
+    rp_uc --> rp_exp_read
+    rp_exp_read --> postgres
+    rp_uc --> rp_metric_read
+    rp_metric_read --> postgres
+    rp_uc --> rp_metric_src
+    rp_metric_src --> clickhouse
+    rp_uc --> rp_formula
+
+    gr_check -->|"acquire lock"| gr_lock
+    gr_lock -->|"SET NX cron:guardrail-check"| redis
+    gr_check --> gr_loader
+    gr_loader --> postgres
+    gr_check --> rp_metric_src
+    gr_check --> gr_eval
+    gr_check -->|"on breach"| gr_exec
+    gr_exec --> exp_agg
+    exp_agg --> exp_es
+    exp_es -->|"event store +<br/>outbox INSERT"| postgres
+    gr_exec -->|"INSERT<br/>GuardrailTrigger<br/>audit"| postgres
+    outbox -->|"poll outbox table"| postgres
+    outbox -->|"produce:<br/>control.domain-events"| kafka
+
+    subgraph control_workers["⚙️ Control Workers  ·  src/apps/control-workers"]
+        direction TB
+
+        cw_consumer["ControlEventsConsumer<br/>experiment/<br/>control-events.consumer.ts<br/>consume: control.domain-events"]:::service
+        cw_flag_proj["FlagProjection<br/>experiment/flag.projection.ts<br/>reads PostgreSQL<br/>writes Redis HSET+XADD"]:::service
+        cw_et_proj["EventTypeProjection<br/>experiment/event-type.projection.ts<br/>reads PostgreSQL<br/>writes Redis HSET+XADD"]:::service
+        cw_notif["NotificationConsumer<br/>notification/<br/>notification.consumer.ts<br/>consume: control.domain-events"]:::service
+        cw_renderer["NotificationRenderer<br/>notification/<br/>notification.renderer.ts"]:::service
+        cw_dispatch["NotificationDispatcher<br/>notification/<br/>notification.dispatcher.ts"]:::service
+        cw_tg["TelegramSender<br/>notification/telegram.sender.ts"]:::infra
+        cw_sl["SlackSender<br/>notification/slack.sender.ts"]:::infra
+    end
+
+    kafka -->|"consume:<br/>control.domain-events"| cw_consumer
+    cw_consumer -->|"aggregateType=Flag"| cw_flag_proj
+    cw_consumer -->|"aggregateType=Experiment"| cw_flag_proj
+    cw_consumer -->|"aggregateType=EventType"| cw_et_proj
+    cw_flag_proj -->|"read flag+experiment"| postgres
+    cw_flag_proj -->|"HSET + XADD<br/>runtime:snapshots"| redis
+    cw_et_proj -->|"read event type"| postgres
+    cw_et_proj -->|"HSET + XADD<br/>event-type:catalog"| redis
+    kafka -->|"consume:<br/>control.domain-events"| cw_notif
+    cw_notif --> cw_dispatch
+    cw_dispatch -->|"match rules,<br/>check dedup/rate-limit"| postgres
+    cw_dispatch --> cw_renderer
+    cw_dispatch --> cw_tg --> telegram_ext
+    cw_dispatch --> cw_sl --> slack_ext
+    cw_dispatch -->|"write deliveries"| postgres

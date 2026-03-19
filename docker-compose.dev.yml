@@ -1,0 +1,181 @@
+name: lotty-ab-platform-dev
+
+services:
+  postgres:
+    image: postgres:18.2-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:8.6.0-alpine
+    restart: unless-stopped
+    command:
+      ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:4.2.0
+    restart: unless-stopped
+    environment:
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-init:
+    image: apache/kafka:4.2.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /bin/bash
+      - -ec
+      - >
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic control.domain-events --partitions 6 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic decision.logs --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.raw --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.normalized --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic events.attributed --partitions 24 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic metric.observations --partitions 24 --replication-factor 1
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.1.3.52
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-lotty}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-lotty}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  clickhouse-bootstrap:
+    build:
+      context: .
+      target: production
+    command:
+      - sh
+      - -ec
+      - |
+        max_attempts="${BOOTSTRAP_MAX_ATTEMPTS:-30}"
+        sleep_seconds="${BOOTSTRAP_RETRY_DELAY_SECONDS:-2}"
+        attempt=1
+        while [ "$$attempt" -le "$$max_attempts" ]; do
+          if bun scripts/migrate-clickhouse.ts; then
+            echo "clickhouse-bootstrap completed on attempt $$attempt/$$max_attempts"
+            exit 0
+          fi
+          echo "clickhouse-bootstrap attempt $$attempt/$$max_attempts failed, retrying in $$sleep_seconds"'s'
+          attempt=$$((attempt + 1))
+          sleep "$$sleep_seconds"
+        done
+        echo "clickhouse-bootstrap failed after $$max_attempts attempts"
+        exit 1
+    environment:
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-lotty}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-lotty}
+      KAFKA_BROKERS: kafka:9092
+      CLICKHOUSE_DECISIONS_KAFKA_GROUP: ${CLICKHOUSE_DECISIONS_KAFKA_GROUP:-clickhouse-decisions-sink}
+      CLICKHOUSE_EVENTS_KAFKA_GROUP: ${CLICKHOUSE_EVENTS_KAFKA_GROUP:-clickhouse-events-attributed-sink}
+      CLICKHOUSE_METRIC_OBS_KAFKA_GROUP: ${CLICKHOUSE_METRIC_OBS_KAFKA_GROUP:-clickhouse-metric-observations-sink}
+      CLICKHOUSE_DECISIONS_KAFKA_CONSUMERS: ${CLICKHOUSE_DECISIONS_KAFKA_CONSUMERS:-1}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  test-runner:
+    image: oven/bun:1-alpine
+    profiles: ["test"]
+    user: "0:0"
+    working_dir: /app
+    volumes:
+      - ./:/app:Z
+    environment:
+      NODE_ENV: test
+      APP_SECRET: test-secret
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CLIENT_ID: lotty-test-runner
+      CLICKHOUSE_HOST: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: default
+      CLICKHOUSE_USER: lotty
+      CLICKHOUSE_PASSWORD: lotty
+      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      BOOTSTRAP_ADMIN_PASSWORD: SecurePass123
+      BOOTSTRAP_ADMIN_NAME: Bootstrap Admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+      clickhouse-bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  clickhouse_data:
